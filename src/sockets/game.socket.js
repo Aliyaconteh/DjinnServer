@@ -55,7 +55,9 @@ class GameSocketHandler {
         delayMs: Number(room.delay_ms || 0),
         status: "active",
         questionStartTime: Date.now(),
+        questionEndTime: null,
         timerInterval: null,
+        timerTimeout: null,
         submittedAnswers: new Set()
       });
 
@@ -84,6 +86,11 @@ class GameSocketHandler {
     const question = roomState.questions[roomState.currentQuestionIndex];
     if (question) {
       socket.emit("game:question", this.formatQuestion(roomState, question));
+      socket.emit("game:timer", {
+        time: this.getSecondsRemaining(roomState),
+        serverTime: Date.now(),
+        questionEndsAt: roomState.questionEndTime
+      });
     }
 
     await this.broadcastLeaderboard(roomCode);
@@ -93,9 +100,7 @@ class GameSocketHandler {
     const roomState = this.rooms.get(roomCode);
     if (!roomState) return;
 
-    if (roomState.timerInterval) {
-      clearInterval(roomState.timerInterval);
-    }
+    this.clearQuestionTimers(roomState);
 
     const question = roomState.questions[questionIndex];
     if (!question) {
@@ -105,33 +110,49 @@ class GameSocketHandler {
 
     roomState.currentQuestionIndex = questionIndex;
     roomState.questionStartTime = Date.now();
+    const timeLimit = this.getQuestionTimeLimit(question);
+    roomState.questionEndTime = roomState.questionStartTime + timeLimit * 1000;
     roomState.submittedAnswers = new Set();
 
     this.io.to(roomCode).emit("game:question", this.formatQuestion(roomState, question));
 
-    let secondsRemaining = question.time_limit || 15;
-    this.io.to(roomCode).emit("game:timer", { time: secondsRemaining });
+    this.io.to(roomCode).emit("game:timer", {
+      time: timeLimit,
+      serverTime: Date.now(),
+      questionEndsAt: roomState.questionEndTime
+    });
 
     roomState.timerInterval = setInterval(() => {
-      secondsRemaining -= 1;
-      this.io.to(roomCode).emit("game:timer", { time: secondsRemaining });
+      const secondsRemaining = this.getSecondsRemaining(roomState);
+      this.io.to(roomCode).emit("game:timer", {
+        time: secondsRemaining,
+        serverTime: Date.now(),
+        questionEndsAt: roomState.questionEndTime
+      });
 
       if (secondsRemaining <= 0) {
         clearInterval(roomState.timerInterval);
-        this.io.to(roomCode).emit("game:timer_finished", { timestamp: Date.now() });
+        roomState.timerInterval = null;
       }
     }, 1000);
+
+    roomState.timerTimeout = setTimeout(() => {
+      this.advanceQuestion(roomCode, questionIndex);
+    }, timeLimit * 1000);
   }
 
   formatQuestion(roomState, question) {
     return {
       questionNumber: roomState.currentQuestionIndex + 1,
       totalQuestions: roomState.questions.length,
+      serverTime: Date.now(),
+      questionStartedAt: roomState.questionStartTime,
+      questionEndsAt: roomState.questionEndTime,
       question: {
         id: question.id,
         text: question.question,
         options: Array.isArray(question.options) ? question.options : [],
-        timeLimit: question.time_limit || 15
+        timeLimit: this.getQuestionTimeLimit(question)
       }
     };
   }
@@ -149,6 +170,15 @@ class GameSocketHandler {
       const question = roomState.questions[roomState.currentQuestionIndex];
       if (!question) {
         socket.emit("error", { message: "No active question" });
+        return;
+      }
+
+      const receivedAt = Date.now();
+      if (roomState.questionEndTime && receivedAt > roomState.questionEndTime) {
+        socket.emit("submission_rejected", {
+          reason: "Time is up for this question",
+          timestamp: receivedAt
+        });
         return;
       }
 
@@ -181,7 +211,7 @@ class GameSocketHandler {
       const submittedAt = Number(clientTimestamp || serverTimestamp);
       const responseTime = Math.max(0, serverTimestamp - roomState.questionStartTime);
       const isCorrect = String(answer).trim() === String(question.correct_answer).trim();
-      const pointsAwarded = this.computeScore(isCorrect, responseTime, question.time_limit || 15);
+      const pointsAwarded = this.computeScore(isCorrect, responseTime, this.getQuestionTimeLimit(question));
       const serverScore = Number(player.score || 0) + pointsAwarded;
       const predictedScore = Number(clientPredictedScore || 0);
 
@@ -263,11 +293,31 @@ class GameSocketHandler {
   }
 
   async handleNextQuestion(socket, { roomCode }) {
-    const roomState = this.rooms.get(roomCode);
-    if (!roomState) return;
+    socket.emit("manual_next_disabled", {
+      roomCode,
+      message: "Questions advance automatically when the timer ends."
+    });
+  }
 
-    if (roomState.currentQuestionIndex + 1 < roomState.questions.length) {
-      this.broadcastQuestion(roomCode, roomState.currentQuestionIndex + 1);
+  async advanceQuestion(roomCode, expectedQuestionIndex) {
+    const roomState = this.rooms.get(roomCode);
+    if (!roomState || roomState.status !== "active") return;
+    if (expectedQuestionIndex !== undefined && roomState.currentQuestionIndex !== expectedQuestionIndex) return;
+
+    this.clearQuestionTimers(roomState);
+    this.io.to(roomCode).emit("game:timer", {
+      time: 0,
+      serverTime: Date.now(),
+      questionEndsAt: roomState.questionEndTime
+    });
+    this.io.to(roomCode).emit("game:timer_finished", {
+      questionNumber: roomState.currentQuestionIndex + 1,
+      timestamp: Date.now()
+    });
+
+    const nextIndex = roomState.currentQuestionIndex + 1;
+    if (nextIndex < roomState.questions.length) {
+      this.broadcastQuestion(roomCode, nextIndex);
     } else {
       await this.handleQuizCompletion(roomCode);
     }
@@ -278,9 +328,8 @@ class GameSocketHandler {
       const roomState = this.rooms.get(roomCode);
       if (!roomState) return;
 
-      if (roomState.timerInterval) {
-        clearInterval(roomState.timerInterval);
-      }
+      this.clearQuestionTimers(roomState);
+      roomState.status = "finished";
 
       await supabaseAdmin
         .from("rooms")
@@ -399,6 +448,27 @@ class GameSocketHandler {
     const secondsUsed = responseTimeMs / 1000;
     const remainingRatio = Math.max(0, (timeLimitSeconds - secondsUsed) / timeLimitSeconds);
     return baseScore + Math.round(remainingRatio * 50);
+  }
+
+  getQuestionTimeLimit(question) {
+    return Math.max(5, Number(question?.time_limit || 15));
+  }
+
+  getSecondsRemaining(roomState) {
+    if (!roomState.questionEndTime) return 0;
+    return Math.max(0, Math.ceil((roomState.questionEndTime - Date.now()) / 1000));
+  }
+
+  clearQuestionTimers(roomState) {
+    if (roomState.timerInterval) {
+      clearInterval(roomState.timerInterval);
+      roomState.timerInterval = null;
+    }
+
+    if (roomState.timerTimeout) {
+      clearTimeout(roomState.timerTimeout);
+      roomState.timerTimeout = null;
+    }
   }
 
   isUuid(value) {
