@@ -3,16 +3,21 @@ const { supabaseAdmin } = require("../../config/supabase.config");
 class RoomRepository {
 
   async createRoom(roomData) {
-    const { data, error } = await supabaseAdmin
-      .from("rooms")
-      .insert([roomData])
-      .select()
-      .single();
+  console.log("ROOM DATA SENT TO SUPABASE:", roomData);
 
-    if (error) throw error;
-    return data;
+  const { data, error } = await supabaseAdmin
+    .from("rooms")
+    .insert([roomData])
+    .select()
+    .single();
+
+  if (error) {
+    console.log("SUPABASE ERROR FULL:", error);
+    throw error;
   }
 
+  return data;
+}
   async getRoomByCode(roomCode) {
     const { data, error } = await supabaseAdmin
       .from("rooms")
@@ -96,3 +101,4 @@ class RoomRepository {
 }
 
 module.exports = new RoomRepository();
+

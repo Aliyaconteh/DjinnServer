@@ -40,4 +40,61 @@ app.get("/health", (req, res) => {
   });
 });
 
+// 🌱 DEVELOPMENT: Seed database with test quiz (GET or POST)
+const seedDatabase = async (req, res) => {
+  try {
+    const QuizService = require("../modules/quizzes/quiz.service");
+    
+    // Create a test quiz
+    const quiz = await QuizService.createQuiz({
+      title: "Sample Science Quiz",
+      created_by: null
+    });
+
+    // Add test questions
+    const questions = [
+      {
+        quiz_id: quiz.id,
+        question: "What is the capital of France?",
+        options: ["London", "Berlin", "Paris", "Madrid"],
+        correct_answer: "Paris",
+        time_limit: 10
+      },
+      {
+        quiz_id: quiz.id,
+        question: "What is 2 + 2?",
+        options: ["3", "4", "5", "6"],
+        correct_answer: "4",
+        time_limit: 5
+      },
+      {
+        quiz_id: quiz.id,
+        question: "What is the largest planet in our solar system?",
+        options: ["Saturn", "Neptune", "Jupiter", "Uranus"],
+        correct_answer: "Jupiter",
+        time_limit: 15
+      }
+    ];
+
+    for (const q of questions) {
+      await QuizService.addQuestion(q);
+    }
+
+    res.json({
+      success: true,
+      message: "✅ Test quiz created successfully!",
+      quiz
+    });
+  } catch (err) {
+    console.error("Seed error:", err);
+    res.status(400).json({
+      success: false,
+      message: err.message
+    });
+  }
+};
+
+app.get("/api/seed", seedDatabase);
+app.post("/api/seed", seedDatabase);
+
 module.exports = app;

@@ -1,12 +1,16 @@
 const RoomRepository = require("./room.repository");
 const RoomUtils = require("./room.utils");
 const { ROOM_STATUS } = require("./room.constants");
+const { supabaseAdmin } = require("../../config/supabase.config");
 
 class RoomService {
 
   // 🚀 CREATE ROOM
   async createRoom(hostId, quizId, options = {}) {
     if (!hostId) throw new Error("Host ID is required");
+
+    const username = options.username || options.roomName || "Host";
+    await this.ensureHostUser(hostId, username);
 
     const roomCode = await this.generateUniqueRoomCode();
     const delay = RoomUtils.resolveDelay(options.delayLevel, options.delayMs);
@@ -19,7 +23,9 @@ class RoomService {
     const room = await RoomRepository.createRoom({
       room_code: roomCode,
       host_id: hostId,
+      username,
       quiz_id: quizId,
+      room_name: options.roomName,
       sync_mode: syncMode,
       delay_level: delay.level,
       delay_ms: delay.ms,
@@ -27,6 +33,19 @@ class RoomService {
     });
 
     return room;
+  }
+
+  async ensureHostUser(hostId, username) {
+    const { error } = await supabaseAdmin
+      .from("users")
+      .upsert([{
+        id: hostId,
+        username
+      }], { onConflict: "id" });
+
+    if (error) {
+      throw new Error(`Could not prepare host user: ${error.message}`);
+    }
   }
 
   // 🚪 JOIN ROOM
@@ -52,11 +71,15 @@ class RoomService {
     );
 
     if (existingPlayer) {
-      throw new Error("Username already exists in this room");
+      return {
+        room,
+        player: existingPlayer
+      };
     }
 
+    const userId = user.id || user.userId || user.hostId || `player_${Date.now()}`;
     const player = await RoomRepository.addPlayer(room.id, {
-      user_id: user.id,
+      user_id: userId,
       username: user.username
     });
 

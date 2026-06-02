@@ -89,10 +89,21 @@ class QuizRepository {
   async getAll() {
     const { data, error } = await supabaseAdmin
       .from("quizzes")
-      .select("*");
+      .select(`
+        id,
+        title,
+        created_by,
+        created_at,
+        questions(id)
+      `);
 
     if (error) throw error;
-    return data;
+    
+    // Add question_count to each quiz
+    return data.map(quiz => ({
+      ...quiz,
+      question_count: quiz.questions ? quiz.questions.length : 0
+    }));
   }
 }
 

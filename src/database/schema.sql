@@ -8,7 +8,8 @@ create table users (
 create table rooms (
   id uuid primary key default gen_random_uuid(),
   room_code text unique not null,
-  host_id uuid references users(id) on delete cascade,
+  room_name text,
+  host_id text,
   sync_mode text check (sync_mode in ('server', 'optimistic')) default 'server',
   delay_level text check (delay_level in ('low', 'medium', 'high', 'custom')) default 'low',
   delay_ms int default 0,
@@ -18,7 +19,7 @@ create table rooms (
 create table room_players (
   id uuid primary key default gen_random_uuid(),
   room_id uuid references rooms(id) on delete cascade,
-  user_id uuid references users(id) on delete cascade,
+  user_id text,
   username text,
   score int default 0,
   joined_at timestamp default now(),

@@ -2,6 +2,30 @@ const RoomService = require("../modules/rooms/room.service");
 
 module.exports = (io, socket) => {
 
+  // helper to broadcast full room updates
+  const broadcastRoomUpdate = async (roomCode) => {
+    try {
+      const roomData = await RoomService.getRoom(roomCode);
+      const players = roomData.players.map(p => ({
+        id: p.id,
+        username: p.username,
+        isHost: p.user_id === roomData.room.host_id
+      }));
+
+      io.to(roomCode).emit("room:update", {
+        id: roomData.room.id,
+        roomCode: roomData.room.room_code,
+        roomName: roomData.room.room_name,
+        syncMode: roomData.room.sync_mode,
+        delayLevel: roomData.room.delay_level,
+        delayMs: roomData.room.delay_ms,
+        players
+      });
+    } catch (err) {
+      console.error("Error broadcasting room update:", err.message);
+    }
+  };
+
   // 🎯 CREATE ROOM EVENT
   socket.on("create-room", async ({ hostId, quizId, syncMode, delayLevel, delayMs }, callback = () => {}) => {
     try {
@@ -19,11 +43,7 @@ module.exports = (io, socket) => {
       });
 
       socket.emit("room-created", { room });
-
-      io.to(room.room_code).emit("room-updated", {
-        message: "Room created",
-        room
-      });
+      await broadcastRoomUpdate(room.room_code);
 
     } catch (err) {
       callback({
@@ -36,18 +56,17 @@ module.exports = (io, socket) => {
   // 🎯 JOIN ROOM EVENT
   socket.on("join-room", async ({ roomCode, player }, callback = () => {}) => {
     try {
-      const room = await RoomService.joinRoom(roomCode, player);
+      const result = await RoomService.joinRoom(roomCode, player);
 
       socket.join(roomCode);
 
       callback({
         success: true,
-        room
+        room: result.room,
+        player: result.player
       });
 
-      io.to(roomCode).emit("player-joined", {
-        player
-      });
+      await broadcastRoomUpdate(roomCode);
 
     } catch (err) {
       callback({

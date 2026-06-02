@@ -1,60 +1,420 @@
-const GameEngine = require("../modules/game/game.engine");
+const { supabaseAdmin } = require("../config/supabase.config");
+const { metricsCollector } = require("../utils/metricsCollector");
 
-let gameEngine;
-
-module.exports = (io, socket) => {
-  if (!gameEngine) {
-    gameEngine = new GameEngine(io);
+class GameSocketHandler {
+  constructor(io) {
+    this.io = io;
+    this.rooms = new Map();
   }
 
-  const startGame = async ({ roomCode, quizId }, callback = () => {}) => {
+  registerEvents(socket) {
+    socket.on("start-game", (data) => this.handleStartGame(socket, data));
+    socket.on("start-quiz", (data) => this.handleStartGame(socket, data));
+    socket.on("game:join", (data) => this.handleGameJoin(socket, data));
+    socket.on("game:answer", (data) => this.handleAnswerSubmission(socket, data));
+    socket.on("submit_answer", (data) => this.handleAnswerSubmission(socket, data));
+    socket.on("next-question", (data) => this.handleNextQuestion(socket, data));
+    socket.on("next_question", (data) => this.handleNextQuestion(socket, data));
+    socket.on("quiz_end", (data) => this.handleQuizEnd(socket, data));
+    socket.on("quiz-end", (data) => this.handleQuizEnd(socket, data));
+  }
+
+  async handleStartGame(socket, data) {
     try {
-      const game = await gameEngine.startGame(roomCode, quizId);
-      callback({ success: true, game });
+      const { roomCode } = data;
+
+      const { data: room, error: roomError } = await supabaseAdmin
+        .from("rooms")
+        .select("*")
+        .eq("room_code", roomCode)
+        .single();
+
+      if (roomError || !room) {
+        socket.emit("error", { message: "Room not found" });
+        return;
+      }
+
+      const { data: questions, error: questionError } = await supabaseAdmin
+        .from("questions")
+        .select("*")
+        .eq("quiz_id", room.quiz_id);
+
+      if (questionError || !questions || questions.length === 0) {
+        socket.emit("error", { message: "No questions found for this quiz" });
+        return;
+      }
+
+      this.rooms.set(roomCode, {
+        id: room.id,
+        roomCode,
+        hostId: room.host_id,
+        questions,
+        currentQuestionIndex: 0,
+        syncMode: room.sync_mode || "server",
+        delayLevel: room.delay_level || "low",
+        delayMs: Number(room.delay_ms || 0),
+        status: "active",
+        questionStartTime: Date.now(),
+        timerInterval: null,
+        submittedAnswers: new Set()
+      });
+
+      this.io.to(roomCode).emit("room:started", { roomCode });
+
+      setTimeout(() => {
+        this.broadcastQuestion(roomCode, 0);
+      }, 1000);
     } catch (err) {
-      callback({ success: false, message: err.message });
+      console.error("Error starting game:", err);
+      socket.emit("error", { message: `Failed to start game: ${err.message}` });
     }
-  };
+  }
 
-  socket.on("start-game", startGame);
-  socket.on("start-quiz", startGame);
+  async handleGameJoin(socket, data = {}) {
+    const { roomCode, username, playerId } = data;
+    if (!roomCode) return;
 
-  socket.on("submit-answer", async (data, callback = () => {}) => {
+    socket.join(roomCode);
+    socket.username = username || socket.username || "Guest";
+    socket.playerId = playerId || socket.playerId || socket.id;
+
+    const roomState = this.rooms.get(roomCode);
+    if (!roomState) return;
+
+    const question = roomState.questions[roomState.currentQuestionIndex];
+    if (question) {
+      socket.emit("game:question", this.formatQuestion(roomState, question));
+    }
+
+    await this.broadcastLeaderboard(roomCode);
+  }
+
+  broadcastQuestion(roomCode, questionIndex) {
+    const roomState = this.rooms.get(roomCode);
+    if (!roomState) return;
+
+    if (roomState.timerInterval) {
+      clearInterval(roomState.timerInterval);
+    }
+
+    const question = roomState.questions[questionIndex];
+    if (!question) {
+      this.handleQuizCompletion(roomCode);
+      return;
+    }
+
+    roomState.currentQuestionIndex = questionIndex;
+    roomState.questionStartTime = Date.now();
+    roomState.submittedAnswers = new Set();
+
+    this.io.to(roomCode).emit("game:question", this.formatQuestion(roomState, question));
+
+    let secondsRemaining = question.time_limit || 15;
+    this.io.to(roomCode).emit("game:timer", { time: secondsRemaining });
+
+    roomState.timerInterval = setInterval(() => {
+      secondsRemaining -= 1;
+      this.io.to(roomCode).emit("game:timer", { time: secondsRemaining });
+
+      if (secondsRemaining <= 0) {
+        clearInterval(roomState.timerInterval);
+        this.io.to(roomCode).emit("game:timer_finished", { timestamp: Date.now() });
+      }
+    }, 1000);
+  }
+
+  formatQuestion(roomState, question) {
+    return {
+      questionNumber: roomState.currentQuestionIndex + 1,
+      totalQuestions: roomState.questions.length,
+      question: {
+        id: question.id,
+        text: question.question,
+        options: Array.isArray(question.options) ? question.options : [],
+        timeLimit: question.time_limit || 15
+      }
+    };
+  }
+
+  async handleAnswerSubmission(socket, data = {}) {
     try {
-      const {
-        roomCode,
-        playerId,
-        userId,
-        questionId,
-        answer,
-        clientTimestamp,
-        predictedScore,
-        delayMs
-      } = data;
+      const { roomCode, answer, clientTimestamp, clientPredictedScore, username, playerId } = data;
+      const roomState = this.rooms.get(roomCode);
 
-      const result = await gameEngine.submitAnswer(
-        roomCode,
-        playerId || userId,
-        questionId,
-        answer,
-        { clientTimestamp, predictedScore, delayMs }
+      if (!roomState) {
+        socket.emit("error", { message: "Active game not found" });
+        return;
+      }
+
+      const question = roomState.questions[roomState.currentQuestionIndex];
+      if (!question) {
+        socket.emit("error", { message: "No active question" });
+        return;
+      }
+
+      const player = await this.findPlayer(
+        roomState.id,
+        username || socket.username,
+        playerId || socket.playerId || socket.id
       );
 
-      callback({ success: true, data: result });
+      if (!player) {
+        socket.emit("error", { message: "Player not registered in this room" });
+        return;
+      }
+
+      const answerKey = `${player.id}:${question.id}`;
+      if (roomState.submittedAnswers.has(answerKey)) {
+        socket.emit("submission_rejected", {
+          reason: "Answer already submitted for this question",
+          timestamp: Date.now()
+        });
+        return;
+      }
+      roomState.submittedAnswers.add(answerKey);
+
+      if (roomState.delayMs > 0) {
+        await this.sleep(roomState.delayMs);
+      }
+
+      const serverTimestamp = Date.now();
+      const submittedAt = Number(clientTimestamp || serverTimestamp);
+      const responseTime = Math.max(0, serverTimestamp - roomState.questionStartTime);
+      const isCorrect = String(answer).trim() === String(question.correct_answer).trim();
+      const pointsAwarded = this.computeScore(isCorrect, responseTime, question.time_limit || 15);
+      const serverScore = Number(player.score || 0) + pointsAwarded;
+      const predictedScore = Number(clientPredictedScore || 0);
+
+      const { error: answerError } = await supabaseAdmin
+        .from("answers")
+        .upsert([{
+          room_id: roomState.id,
+          player_id: player.id,
+          user_id: null,
+          question_id: question.id,
+          selected_answer: answer,
+          is_correct: isCorrect,
+          response_time: responseTime
+        }], { onConflict: "room_id,player_id,question_id" });
+
+      if (answerError) throw answerError;
+
+      const { error: playerError } = await supabaseAdmin
+        .from("room_players")
+        .update({ score: serverScore })
+        .eq("id", player.id);
+
+      if (playerError) throw playerError;
+
+      await supabaseAdmin
+        .from("leaderboard")
+        .upsert([{
+          room_id: roomState.id,
+          player_id: player.id,
+          user_id: null,
+          score: serverScore,
+          updated_at: new Date()
+        }], { onConflict: "room_id,player_id" });
+
+      await supabaseAdmin
+        .from("synchronization_logs")
+        .insert([{
+          room_id: roomState.id,
+          player_id: player.id,
+          user_id: null,
+          question_id: question.id,
+          sync_mode: roomState.syncMode,
+          event_type: "answer-submission",
+          delay_level: roomState.delayLevel,
+          artificial_delay_ms: roomState.delayMs,
+          client_timestamp: submittedAt,
+          server_timestamp: serverTimestamp,
+          latency: Math.max(0, serverTimestamp - submittedAt),
+          predicted_score: predictedScore,
+          server_score: serverScore,
+          reconciliation_required: predictedScore > 0 && predictedScore !== serverScore,
+          score_difference: predictedScore - serverScore
+        }]);
+
+      metricsCollector.recordSubmission(socket.id, {
+        roomId: roomState.id,
+        playerId: player.id,
+        questionId: question.id,
+        answer,
+        syncModel: roomState.syncMode,
+        clientTimestamp: submittedAt,
+        clientPredictedScore: predictedScore
+      });
+
+      socket.emit("answer_confirmed", {
+        isCorrect,
+        pointsAwarded,
+        score: serverScore,
+        serverScore,
+        timestamp: serverTimestamp,
+        model: roomState.syncMode
+      });
+
+      await this.broadcastLeaderboard(roomCode);
     } catch (err) {
-      callback({ success: false, message: err.message });
+      console.error("Error submitting answer:", err);
+      socket.emit("error", { message: `Failed to submit answer: ${err.message}` });
     }
-  });
+  }
 
-  socket.on("next-question", ({ roomCode }) => {
-    gameEngine.processNextStep(roomCode);
-  });
+  async handleNextQuestion(socket, { roomCode }) {
+    const roomState = this.rooms.get(roomCode);
+    if (!roomState) return;
 
-  socket.on("get-leaderboard", ({ roomCode }) => {
-    const board = gameEngine.leaderboardService.getSorted(roomCode);
+    if (roomState.currentQuestionIndex + 1 < roomState.questions.length) {
+      this.broadcastQuestion(roomCode, roomState.currentQuestionIndex + 1);
+    } else {
+      await this.handleQuizCompletion(roomCode);
+    }
+  }
 
-    socket.emit("leaderboard-update", {
-      leaderboard: board
-    });
-  });
+  async handleQuizCompletion(roomCode) {
+    try {
+      const roomState = this.rooms.get(roomCode);
+      if (!roomState) return;
+
+      if (roomState.timerInterval) {
+        clearInterval(roomState.timerInterval);
+      }
+
+      await supabaseAdmin
+        .from("rooms")
+        .update({ status: "finished" })
+        .eq("id", roomState.id);
+
+      const { data: leaderboardData, error } = await supabaseAdmin
+        .from("room_players")
+        .select("id, username, score, joined_at")
+        .eq("room_id", roomState.id)
+        .order("score", { ascending: false })
+        .order("joined_at", { ascending: true });
+
+      if (error) throw error;
+
+      const leaderboard = (leaderboardData || []).map((player, index) => ({
+        id: player.id,
+        rank: index + 1,
+        username: player.username,
+        score: Number(player.score || 0)
+      }));
+
+      if (leaderboard.length) {
+        await supabaseAdmin
+          .from("session_results")
+          .insert(leaderboard.map((player) => ({
+            room_id: roomState.id,
+            player_id: player.id,
+            user_id: null,
+            score: player.score,
+            rank: player.rank
+          })));
+      }
+
+      this.io.to(roomCode).emit("game:finished", {
+        roomCode,
+        scores: leaderboard,
+        leaderboard
+      });
+
+      this.rooms.delete(roomCode);
+    } catch (err) {
+      console.error("Error completing quiz:", err);
+    }
+  }
+
+  async handleQuizEnd(socket, { roomCode }) {
+    await this.handleQuizCompletion(roomCode);
+  }
+
+  async broadcastLeaderboard(roomCode) {
+    const roomState = this.rooms.get(roomCode);
+    if (!roomState) return;
+
+    const { data, error } = await supabaseAdmin
+      .from("room_players")
+      .select("id, username, score, joined_at")
+      .eq("room_id", roomState.id)
+      .order("score", { ascending: false })
+      .order("joined_at", { ascending: true });
+
+    if (error) {
+      console.error("Failed to load leaderboard:", error.message);
+      return;
+    }
+
+    const players = (data || []).map((player, index) => ({
+      id: player.id,
+      rank: index + 1,
+      username: player.username,
+      score: Number(player.score || 0)
+    }));
+
+    this.io.to(roomCode).emit("game:leaderboard", { players });
+    this.io.to(roomCode).emit("leaderboard-update", { leaderboard: players });
+  }
+
+  async findPlayer(roomId, username, playerId) {
+    if (username) {
+      const { data } = await supabaseAdmin
+        .from("room_players")
+        .select("*")
+        .eq("room_id", roomId)
+        .eq("username", username)
+        .maybeSingle();
+      if (data) return data;
+    }
+
+    if (this.isUuid(playerId)) {
+      const { data } = await supabaseAdmin
+        .from("room_players")
+        .select("*")
+        .eq("room_id", roomId)
+        .eq("id", playerId)
+        .maybeSingle();
+      if (data) return data;
+    }
+
+    if (playerId) {
+      const { data } = await supabaseAdmin
+        .from("room_players")
+        .select("*")
+        .eq("room_id", roomId)
+        .eq("user_id", playerId)
+        .maybeSingle();
+      if (data) return data;
+    }
+
+    return null;
+  }
+
+  computeScore(isCorrect, responseTimeMs, timeLimitSeconds) {
+    if (!isCorrect) return 0;
+
+    const baseScore = 100;
+    const secondsUsed = responseTimeMs / 1000;
+    const remainingRatio = Math.max(0, (timeLimitSeconds - secondsUsed) / timeLimitSeconds);
+    return baseScore + Math.round(remainingRatio * 50);
+  }
+
+  isUuid(value) {
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value || "");
+  }
+
+  sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+}
+
+module.exports = (io, socket) => {
+  if (!io.gameHandler) {
+    io.gameHandler = new GameSocketHandler(io);
+  }
+  io.gameHandler.registerEvents(socket);
 };
+
+module.exports.GameSocketHandler = GameSocketHandler;

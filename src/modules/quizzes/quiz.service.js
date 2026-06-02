@@ -17,8 +17,9 @@ class QuizService {
   }
 
   async addQuestion(question) {
-    this.validateQuestion(question);
-    return await QuizRepository.addQuestion(question);
+    const sanitizedQuestion = this.sanitizeQuestion(question);
+    this.validateQuestion(sanitizedQuestion);
+    return await QuizRepository.addQuestion(sanitizedQuestion);
   }
 
   async updateQuestion(id, updates) {
@@ -51,6 +52,18 @@ class QuizService {
     if (question.time_limit && Number(question.time_limit) < 5) {
       throw new Error("time_limit must be at least 5 seconds");
     }
+  }
+
+  sanitizeQuestion(question) {
+    return {
+      ...question,
+      question: typeof question.question === "string" ? question.question.trim() : question.question,
+      options: Array.isArray(question.options)
+        ? question.options.map((option) => (typeof option === "string" ? option.trim() : option))
+        : question.options,
+      correct_answer:
+        typeof question.correct_answer === "string" ? question.correct_answer.trim() : question.correct_answer
+    };
   }
 }
 
