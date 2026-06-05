@@ -2,42 +2,68 @@ const QuizRepository = require("./quiz.repository");
 
 class QuizService {
 
-  async createQuiz(data) {
-    return await QuizRepository.createQuiz(data);
+  async createQuiz({ title, created_by }) {
+    if (!title) throw new Error("Quiz title is required");
+    if (!created_by) throw new Error("Host authentication is required");
+
+    return await QuizRepository.createQuiz({
+      title,
+      created_by
+    });
   }
 
-  async updateQuiz(id, updates) {
+  async updateQuiz(id, updates, hostId) {
     if (!id) throw new Error("Quiz ID is required");
+    await this.ensureQuizOwner(id, hostId);
     return await QuizRepository.updateQuiz(id, updates);
   }
 
-  async deleteQuiz(id) {
+  async deleteQuiz(id, hostId) {
     if (!id) throw new Error("Quiz ID is required");
+    await this.ensureQuizOwner(id, hostId);
     return await QuizRepository.deleteQuiz(id);
   }
 
-  async addQuestion(question) {
+  async addQuestion(question, hostId) {
+    await this.ensureQuizOwner(question.quiz_id, hostId);
     const sanitizedQuestion = this.sanitizeQuestion(question);
     this.validateQuestion(sanitizedQuestion);
     return await QuizRepository.addQuestion(sanitizedQuestion);
   }
 
-  async updateQuestion(id, updates) {
+  async updateQuestion(id, updates, hostId) {
     if (!id) throw new Error("Question ID is required");
+    const question = await QuizRepository.getQuestionById(id);
+    if (!question) throw new Error("Question not found");
+    await this.ensureQuizOwner(question.quiz_id, hostId);
     return await QuizRepository.updateQuestion(id, updates);
   }
 
-  async deleteQuestion(id) {
+  async deleteQuestion(id, hostId) {
     if (!id) throw new Error("Question ID is required");
+    const question = await QuizRepository.getQuestionById(id);
+    if (!question) throw new Error("Question not found");
+    await this.ensureQuizOwner(question.quiz_id, hostId);
     return await QuizRepository.deleteQuestion(id);
   }
 
-  async getQuiz(id) {
+  async getQuiz(id, hostId) {
+    await this.ensureQuizOwner(id, hostId);
     return await QuizRepository.getQuizWithQuestions(id);
   }
 
-  async getAllQuizzes() {
-    return await QuizRepository.getAll();
+  async getAllQuizzes(hostId) {
+    return await QuizRepository.getAllByOwner(hostId);
+  }
+
+  async ensureQuizOwner(quizId, hostId) {
+    if (!hostId) throw new Error("Host authorization required");
+    const quiz = await QuizRepository.getQuizById(quizId);
+    if (!quiz) throw new Error("Quiz not found");
+    if (quiz.created_by !== hostId) {
+      throw new Error("You do not have permission to access this quiz");
+    }
+    return quiz;
   }
 
   validateQuestion(question) {

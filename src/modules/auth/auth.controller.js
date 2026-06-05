@@ -54,6 +54,20 @@ class AuthController {
       });
     }
   }
+
+  async me(req, res) {
+    try {
+      return res.json({
+        success: true,
+        data: req.user
+      });
+    } catch (err) {
+      return res.status(500).json({
+        success: false,
+        message: err.message
+      });
+    }
+  }
 }
 
 module.exports = new AuthController();

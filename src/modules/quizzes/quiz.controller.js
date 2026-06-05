@@ -3,7 +3,8 @@ const QuizService = require("./quiz.service");
 class QuizController {
   async create(req, res) {
     try {
-      const { title, created_by } = req.body;
+      const { title } = req.body;
+      const hostId = req.user?.id;
 
       if (!title) {
         return res.status(400).json({
@@ -14,7 +15,7 @@ class QuizController {
 
       const quiz = await QuizService.createQuiz({
         title,
-        created_by
+        created_by: hostId
       });
 
       return res.status(201).json({
@@ -31,6 +32,7 @@ class QuizController {
 
   async addQuestion(req, res) {
     try {
+      const hostId = req.user?.id;
       const quiz_id = req.body.quiz_id || req.body.quizId;
       const question = req.body.question || req.body.question_text || req.body.questionText;
       const options = req.body.options || [
@@ -61,7 +63,7 @@ class QuizController {
         options,
         correct_answer,
         time_limit
-      });
+      }, hostId);
 
       return res.status(201).json({
         success: true,
@@ -93,7 +95,7 @@ class QuizController {
 
   async remove(req, res) {
     try {
-      const quiz = await QuizService.deleteQuiz(req.params.id);
+      const quiz = await QuizService.deleteQuiz(req.params.id, req.user?.id);
 
       return res.json({
         success: true,
@@ -109,7 +111,7 @@ class QuizController {
 
   async updateQuestion(req, res) {
     try {
-      const question = await QuizService.updateQuestion(req.params.id, req.body);
+      const question = await QuizService.updateQuestion(req.params.id, req.body, req.user?.id);
 
       return res.json({
         success: true,
@@ -125,7 +127,7 @@ class QuizController {
 
   async deleteQuestion(req, res) {
     try {
-      const question = await QuizService.deleteQuestion(req.params.id);
+      const question = await QuizService.deleteQuestion(req.params.id, req.user?.id);
 
       return res.json({
         success: true,
@@ -141,7 +143,7 @@ class QuizController {
 
   async getQuiz(req, res) {
     try {
-      const quiz = await QuizService.getQuiz(req.params.id);
+      const quiz = await QuizService.getQuiz(req.params.id, req.user?.id);
 
       return res.json({
         success: true,
@@ -157,7 +159,7 @@ class QuizController {
 
   async getAll(req, res) {
     try {
-      const quizzes = await QuizService.getAllQuizzes();
+      const quizzes = await QuizService.getAllQuizzes(req.user?.id);
 
       return res.json({
         success: true,

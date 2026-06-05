@@ -5,7 +5,7 @@ const { supabaseAdmin } = require("../../config/supabase.config");
 
 class RoomService {
 
-  // 🚀 CREATE ROOM
+  // CREATE ROOM
   async createRoom(hostId, quizId, options = {}) {
     if (!hostId) throw new Error("Host ID is required");
 
@@ -90,18 +90,36 @@ class RoomService {
   }
 
   // ▶ START ROOM
-  async startRoom(roomCode) {
+  async startRoom(roomCode, hostId) {
+    const room = await RoomRepository.getRoomByCode(roomCode);
+    if (!room) throw new Error("Room not found");
+    if (room.host_id !== hostId) {
+      throw new Error("Only the room host may start the room");
+    }
+
     return await RoomRepository.updateStatus(
       roomCode,
       ROOM_STATUS.ACTIVE
     );
   }
 
-  async finishRoom(roomCode) {
+  async finishRoom(roomCode, hostId) {
+    const room = await RoomRepository.getRoomByCode(roomCode);
+    if (!room) throw new Error("Room not found");
+    if (room.host_id !== hostId) {
+      throw new Error("Only the room host may finish the room");
+    }
+
     return await RoomRepository.updateStatus(
       roomCode,
       ROOM_STATUS.FINISHED
     );
+  }
+
+  async getRoomsByHost(hostId) {
+    if (!hostId) throw new Error("Host authentication required");
+    const rooms = await RoomRepository.getRoomsByHost(hostId);
+    return rooms;
   }
 
   // 🧾 GET ROOM DATA

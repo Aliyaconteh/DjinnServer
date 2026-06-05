@@ -1,4 +1,4 @@
-const { supabase } = require("../config/supabase.config");
+const AuthService = require("../modules/auth/auth.service");
 
 const authMiddleware = async (req, res, next) => {
   try {
@@ -8,17 +8,20 @@ const authMiddleware = async (req, res, next) => {
       return res.status(401).json({ message: "No token provided" });
     }
 
-    const { data, error } = await supabase.auth.getUser(token);
+    const user = await AuthService.getUser(token);
 
-    if (error || !data.user) {
+    if (!user) {
       return res.status(401).json({ message: "Invalid token" });
     }
 
-    req.user = data.user;
-    next();
+    if (user.role !== "host") {
+      return res.status(403).json({ message: "Host access required" });
+    }
 
+    req.user = user;
+    next();
   } catch (err) {
-    res.status(401).json({ message: "Unauthorized" });
+    res.status(401).json({ message: err.message || "Unauthorized" });
   }
 };
 

@@ -3,7 +3,7 @@ const { supabaseAdmin } = require("../../config/supabase.config");
 class RoomRepository {
 
   async createRoom(roomData) {
-  console.log("ROOM DATA SENT TO SUPABASE:", roomData);
+  console.debug("ROOM DATA SENT TO_SUPABASE:", roomData);
 
   const { data, error } = await supabaseAdmin
     .from("rooms")
@@ -12,7 +12,7 @@ class RoomRepository {
     .single();
 
   if (error) {
-    console.log("SUPABASE ERROR FULL:", error);
+    console.error("Supabase insert error:", error);
     throw error;
   }
 
@@ -26,6 +26,17 @@ class RoomRepository {
       .single();
 
     if (error) return null;
+    return data;
+  }
+
+  async getRoomsByHost(hostId) {
+    const { data, error } = await supabaseAdmin
+      .from("rooms")
+      .select("*")
+      .eq("host_id", hostId)
+      .order("created_at", { ascending: false });
+
+    if (error) throw error;
     return data;
   }
 

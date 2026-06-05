@@ -3,13 +3,14 @@ create table users (
   username text not null,
   email text unique,
   password_hash text,
+  role text check (role in ('host', 'player')) default 'host',
   created_at timestamp default now()
 );
 create table rooms (
   id uuid primary key default gen_random_uuid(),
   room_code text unique not null,
   room_name text,
-  host_id text,
+  host_id uuid references users(id),
   sync_mode text check (sync_mode in ('server', 'optimistic')) default 'server',
   delay_level text check (delay_level in ('low', 'medium', 'high', 'custom')) default 'low',
   delay_ms int default 0,

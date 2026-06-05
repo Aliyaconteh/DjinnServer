@@ -48,6 +48,17 @@ class QuizRepository {
     return data;
   }
 
+  async getQuestionById(questionId) {
+    const { data, error } = await supabaseAdmin
+      .from("questions")
+      .select("*")
+      .eq("id", questionId)
+      .single();
+
+    if (error) throw error;
+    return data;
+  }
+
   async updateQuestion(id, updates) {
     const { data, error } = await supabaseAdmin
       .from("questions")
@@ -85,8 +96,18 @@ class QuizRepository {
     return data;
   }
 
-  // 📌 GET ALL QUIZZES
-  async getAll() {
+  async getQuizById(quizId) {
+    const { data, error } = await supabaseAdmin
+      .from("quizzes")
+      .select("*")
+      .eq("id", quizId)
+      .single();
+
+    if (error) throw error;
+    return data;
+  }
+
+  async getAllByOwner(hostId) {
     const { data, error } = await supabaseAdmin
       .from("quizzes")
       .select(`
@@ -95,12 +116,11 @@ class QuizRepository {
         created_by,
         created_at,
         questions(id)
-      `);
+      `)
+      .eq("created_by", hostId);
 
     if (error) throw error;
-    
-    // Add question_count to each quiz
-    return data.map(quiz => ({
+    return data.map((quiz) => ({
       ...quiz,
       question_count: quiz.questions ? quiz.questions.length : 0
     }));

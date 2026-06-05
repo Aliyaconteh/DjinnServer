@@ -1,6 +1,9 @@
 const express = require("express");
 const router = express.Router();
 const QuizController = require("./quiz.controller");
+const authMiddleware = require("../../middlewares/auth.middleware");
+
+router.use(authMiddleware);
 
 router.get("/", (req, res) => QuizController.getAll(req, res));
 router.post("/", (req, res) => QuizController.create(req, res));
