@@ -6,7 +6,7 @@ const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key-change-in-producti
 
 class AuthService {
 
-  // 🟢 SIGN UP - HOST ONLY
+  //  SIGN UP - HOST ONLY
   async signup(email, password, username) {
     // Validate input
     if (!email || !password || !username) {
@@ -58,7 +58,7 @@ class AuthService {
     };
   }
 
-  // 🟢 LOGIN - HOST ONLY
+  //  LOGIN - HOST ONLY
   async login(email, password) {
     if (!email || !password) {
       throw new Error("Email and password are required");
@@ -97,7 +97,7 @@ class AuthService {
     };
   }
 
-  // 🟢 GET USER FROM TOKEN
+  //  GET USER FROM TOKEN
   async getUser(token) {
     try {
       const decoded = jwt.verify(token, JWT_SECRET);
@@ -114,7 +114,7 @@ class AuthService {
     }
   }
 
-  // 🟢 VERIFY TOKEN (for middleware)
+  //  VERIFY TOKEN (for middleware)
   verifyToken(token) {
     try {
       return jwt.verify(token, JWT_SECRET);
@@ -123,7 +123,7 @@ class AuthService {
     }
   }
 
-  // 🟢 LOGOUT (invalidate token - handled by client)
+  // LOGOUT (invalidate token - handled by client)
   logout() {
     // Token-based auth: client should discard token
     return { message: "Logout successful" };
