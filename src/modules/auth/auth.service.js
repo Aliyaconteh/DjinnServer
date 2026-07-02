@@ -97,6 +97,70 @@ class AuthService {
     };
   }
 
+  async updateProfile(userId, username) {
+    const trimmedUsername = username?.trim();
+
+    if (!trimmedUsername) {
+      throw new Error("Username is required");
+    }
+
+    const { data, error } = await supabaseAdmin
+      .from("users")
+      .update({ username: trimmedUsername })
+      .eq("id", userId)
+      .select("id, email, username, role")
+      .single();
+
+    if (error || !data) {
+      throw new Error("Failed to update profile");
+    }
+
+    return {
+      user: data,
+      message: "Profile updated successfully"
+    };
+  }
+
+  async changePassword(userId, currentPassword, newPassword) {
+    if (!currentPassword || !newPassword) {
+      throw new Error("Current and new password are required");
+    }
+
+    if (newPassword.length < 6) {
+      throw new Error("New password must be at least 6 characters");
+    }
+
+    const { data: user, error: userError } = await supabaseAdmin
+      .from("users")
+      .select("password_hash")
+      .eq("id", userId)
+      .single();
+
+    if (userError || !user) {
+      throw new Error("User not found");
+    }
+
+    const isCurrentPasswordValid = await bcrypt.compare(currentPassword, user.password_hash);
+
+    if (!isCurrentPasswordValid) {
+      throw new Error("Current password is incorrect");
+    }
+
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    const { error } = await supabaseAdmin
+      .from("users")
+      .update({ password_hash: hashedPassword })
+      .eq("id", userId);
+
+    if (error) {
+      throw new Error("Failed to update password");
+    }
+
+    return {
+      message: "Password updated successfully"
+    };
+  }
+
   //  GET USER FROM TOKEN
   async getUser(token) {
     try {

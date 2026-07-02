@@ -17,10 +17,16 @@ app.use(helmet());
 app.use(morgan("dev"));
 
 // CORS setup
-app.use(cors({
-  origin: "*",
-  credentials: true
-}));
+const corsOptions = {
+  origin: (origin, callback) => callback(null, true),
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+  optionsSuccessStatus: 204,
+};
+
+app.use(cors(corsOptions));
+app.options(/(.*)/, cors(corsOptions));
 
 // Body parser
 app.use(express.json());

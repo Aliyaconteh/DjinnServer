@@ -68,6 +68,26 @@ class AuthController {
       });
     }
   }
+
+  async updateProfile(req, res) {
+    try {
+      const { username } = req.body;
+      const data = await AuthService.updateProfile(req.user.id, username);
+      return res.json({ success: true, data });
+    } catch (err) {
+      return res.status(400).json({ success: false, message: err.message });
+    }
+  }
+
+  async changePassword(req, res) {
+    try {
+      const { currentPassword, newPassword } = req.body;
+      const data = await AuthService.changePassword(req.user.id, currentPassword, newPassword);
+      return res.json({ success: true, data });
+    } catch (err) {
+      return res.status(400).json({ success: false, message: err.message });
+    }
+  }
 }
 
 module.exports = new AuthController();

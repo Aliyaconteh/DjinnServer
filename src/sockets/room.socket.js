@@ -19,6 +19,7 @@ module.exports = (io, socket) => {
         syncMode: roomData.room.sync_mode,
         delayLevel: roomData.room.delay_level,
         delayMs: roomData.room.delay_ms,
+        hostId: roomData.room.host_id,
         players
       });
     } catch (err) {
