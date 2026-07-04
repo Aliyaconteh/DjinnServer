@@ -114,6 +114,7 @@ class AuthService {
     }
 
     const email = googleUser.email.toLowerCase();
+    const googleUsername = this.getOAuthUsername(googleUser);
     const { data: existingUser, error: userError } = await supabaseAdmin
       .from("users")
       .select("id, email, username, role")
@@ -126,6 +127,21 @@ class AuthService {
 
     let user = existingUser;
 
+    if (user && user.username !== googleUsername) {
+      const { data: updatedUser, error: updateError } = await supabaseAdmin
+        .from("users")
+        .update({ username: googleUsername })
+        .eq("id", user.id)
+        .select("id, email, username, role")
+        .single();
+
+      if (updateError) {
+        throw new Error(`Google sign-in failed: ${updateError.message}`);
+      }
+
+      user = updatedUser;
+    }
+
     if (!user) {
       const { data: createdUser, error: createError } = await supabaseAdmin
         .from("users")
@@ -133,7 +149,7 @@ class AuthService {
           {
             id: googleUser.id,
             email,
-            username: this.getOAuthUsername(googleUser),
+            username: googleUsername,
             role: "host"
           }
         ])
@@ -268,9 +284,7 @@ class AuthService {
 
   // Helper: Ensure user profile
   async ensureUserProfile(user) {
-    const username = user.user_metadata?.username
-      || user.email?.split("@")[0]
-      || "User";
+    const username = this.getOAuthUsername(user);
 
     const { error } = await supabaseAdmin
       .from("users")
@@ -285,8 +299,17 @@ class AuthService {
   }
 
   getOAuthUsername(user) {
-    return user.user_metadata?.full_name
-      || user.user_metadata?.name
+    const metadata = user.user_metadata || {};
+    const googleIdentity = user.identities?.find((identity) => identity.provider === "google");
+    const identityData = googleIdentity?.identity_data || {};
+    const googleName = metadata.full_name
+      || metadata.name
+      || metadata.display_name
+      || identityData.full_name
+      || identityData.name
+      || identityData.display_name;
+
+    return googleName?.trim()
       || user.email?.split("@")[0]
       || "Host";
   }
