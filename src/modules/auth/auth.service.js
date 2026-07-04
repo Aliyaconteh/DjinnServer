@@ -1,6 +1,6 @@
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
-const { supabaseAdmin } = require("../../config/supabase.config");
+const { supabase, supabaseAdmin } = require("../../config/supabase.config");
 
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key-change-in-production";
 
@@ -14,7 +14,7 @@ class AuthService {
     }
 
     // Check if user already exists
-    const { data: existingUser, error: checkError } = await supabaseAdmin
+    const { data: existingUser } = await supabaseAdmin
       .from("users")
       .select("id, email")
       .eq("email", email)
@@ -75,6 +75,10 @@ class AuthService {
       throw new Error("Invalid email or password");
     }
 
+    if (!user.password_hash) {
+      throw new Error("Invalid email or password");
+    }
+
     // Verify password
     const isValidPassword = await bcrypt.compare(password, user.password_hash);
 
@@ -94,6 +98,66 @@ class AuthService {
       },
       token,
       message: "Login successful"
+    };
+  }
+
+  async loginWithGoogle(accessToken) {
+    if (!accessToken) {
+      throw new Error("Google access token is required");
+    }
+
+    const { data: authData, error: authError } = await supabase.auth.getUser(accessToken);
+    const googleUser = authData?.user;
+
+    if (authError || !googleUser?.email) {
+      throw new Error("Invalid Google sign-in");
+    }
+
+    const email = googleUser.email.toLowerCase();
+    const { data: existingUser, error: userError } = await supabaseAdmin
+      .from("users")
+      .select("id, email, username, role")
+      .eq("email", email)
+      .maybeSingle();
+
+    if (userError) {
+      throw new Error(`Google sign-in failed: ${userError.message}`);
+    }
+
+    let user = existingUser;
+
+    if (!user) {
+      const { data: createdUser, error: createError } = await supabaseAdmin
+        .from("users")
+        .insert([
+          {
+            id: googleUser.id,
+            email,
+            username: this.getOAuthUsername(googleUser),
+            role: "host"
+          }
+        ])
+        .select("id, email, username, role")
+        .single();
+
+      if (createError) {
+        throw new Error(`Google sign-in failed: ${createError.message}`);
+      }
+
+      user = createdUser;
+    }
+
+    const token = this.generateToken(user.id, user.email);
+
+    return {
+      user: {
+        id: user.id,
+        email: user.email,
+        username: user.username,
+        role: user.role || "host"
+      },
+      token,
+      message: "Google sign-in successful"
     };
   }
 
@@ -218,6 +282,13 @@ class AuthService {
       }, { onConflict: "id" });
 
     if (error) throw error;
+  }
+
+  getOAuthUsername(user) {
+    return user.user_metadata?.full_name
+      || user.user_metadata?.name
+      || user.email?.split("@")[0]
+      || "Host";
   }
 }
 

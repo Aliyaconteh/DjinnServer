@@ -55,6 +55,33 @@ class AuthController {
     }
   }
 
+  async googleLogin(req, res) {
+    try {
+      const { accessToken } = req.body;
+
+      if (!accessToken) {
+        return res.status(400).json({
+          success: false,
+          message: "Google access token is required"
+        });
+      }
+
+      const data = await AuthService.loginWithGoogle(accessToken);
+
+      return res.json({
+        success: true,
+        data
+      });
+    } catch (err) {
+      console.error("Google login failed:", err);
+      return res.status(401).json({
+        success: false,
+        message: err.message,
+        cause: err.cause?.message
+      });
+    }
+  }
+
   async me(req, res) {
     try {
       return res.json({
