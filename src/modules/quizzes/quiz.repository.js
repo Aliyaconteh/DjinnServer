@@ -27,6 +27,25 @@ class QuizRepository {
   }
 
   async deleteQuiz(id) {
+    // Remove any answers that reference questions belonging to this quiz
+    const { data: questions, error: qErr } = await supabaseAdmin
+      .from("questions")
+      .select("id")
+      .eq("quiz_id", id);
+
+    if (qErr) throw qErr;
+
+    const questionIds = Array.isArray(questions) ? questions.map((q) => q.id) : [];
+
+    if (questionIds.length > 0) {
+      const { error: aErr } = await supabaseAdmin
+        .from("answers")
+        .delete()
+        .in("question_id", questionIds);
+
+      if (aErr) throw aErr;
+    }
+
     const { error } = await supabaseAdmin
       .from("quizzes")
       .delete()
